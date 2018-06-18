@@ -30,20 +30,13 @@ pub mod ffi {
         include!(concat!(env!("OUT_DIR"), "/glx_extra_bindings.rs"));
     }
 }
- 
+
 pub struct Context {
     glx: ffi::glx::Glx,
     display: *mut ffi::Display,
     window: ffi::Window,
     context: ffi::GLXContext,
     pixel_format: PixelFormat,
-}
-
-// TODO: remove me
-fn with_c_str<F, T>(s: &str, f: F) -> T where F: FnOnce(*const libc::c_char) -> T {
-    use std::ffi::CString;
-    let c_str = CString::new(s.as_bytes().to_vec()).unwrap();
-    f(c_str.as_ptr())
 }
 
 impl Context {
@@ -78,8 +71,8 @@ impl Context {
 
         // finding the pixel format we want
         let (fb_config, pixel_format) = unsafe {
-            try!(choose_fbconfig(&glx, &extensions, xlib, display, screen_id, pf_reqs, transparent)
-                                          .map_err(|_| CreationError::NoAvailablePixelFormat))
+            choose_fbconfig(&glx, &extensions, xlib, display, screen_id, pf_reqs, transparent)
+                                          .map_err(|_| CreationError::NoAvailablePixelFormat)?
         };
 
         // getting the visual infos
@@ -189,10 +182,9 @@ impl<'a> ContextPrototype<'a> {
         };
 
         // loading the extra GLX functions
-        let extra_functions = ffi::glx_extra::Glx::load_with(|addr| {
-            with_c_str(addr, |s| {
-                unsafe { self.glx.GetProcAddress(s as *const u8) as *const _ }
-            })
+        let extra_functions = ffi::glx_extra::Glx::load_with(|proc_name| {
+            let c_str = CString::new(proc_name).unwrap();
+            unsafe { self.glx.GetProcAddress(c_str.as_ptr() as *const u8) as *const _ }
         });
 
         // creating GL context
@@ -219,26 +211,26 @@ impl<'a> ContextPrototype<'a> {
                             Err(_) => continue
                         }
                     }
-                    ctxt = try!(create_context(&self.glx, &extra_functions, &self.extensions, &self.xlib, (1, 0),
+                    ctxt = create_context(&self.glx, &extra_functions, &self.extensions, &self.xlib, (1, 0),
                                                self.opengl.profile, self.opengl.debug,
                                                self.opengl.robustness, share,
-                                               self.display, self.fb_config, &self.visual_infos));
+                                               self.display, self.fb_config, &self.visual_infos)?;
                     break;
                 }
                 ctxt
             },
             GlRequest::Specific(Api::OpenGl, (major, minor)) => {
-                try!(create_context(&self.glx, &extra_functions, &self.extensions, &self.xlib, (major, minor),
+                create_context(&self.glx, &extra_functions, &self.extensions, &self.xlib, (major, minor),
                                     self.opengl.profile, self.opengl.debug,
                                     self.opengl.robustness, share, self.display, self.fb_config,
-                                    &self.visual_infos))
+                                    &self.visual_infos)?
             },
             GlRequest::Specific(_, _) => panic!("Only OpenGL is supported"),
             GlRequest::GlThenGles { opengl_version: (major, minor), .. } => {
-                try!(create_context(&self.glx, &extra_functions, &self.extensions, &self.xlib, (major, minor),
+                create_context(&self.glx, &extra_functions, &self.extensions, &self.xlib, (major, minor),
                                     self.opengl.profile, self.opengl.debug,
                                     self.opengl.robustness, share, self.display, self.fb_config,
-                                    &self.visual_infos))
+                                    &self.visual_infos)?
             },
         };
 
@@ -379,7 +371,7 @@ fn create_context(glx: &ffi::glx::Glx, extra_functions: &ffi::glx_extra::Glx, ex
             let visual_infos: *const ffi::XVisualInfo = visual_infos;
             glx.CreateContext(display as *mut _, visual_infos as *mut _, share, 1)
         };
-        
+
         (xlib.XSetErrorHandler)(old_callback);
 
         if context.is_null() {

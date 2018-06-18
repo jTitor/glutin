@@ -1,7 +1,7 @@
 # glutin -  OpenGL, UTilities and INput
 [![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/tomaka/glutin?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-[![](http://meritbadge.herokuapp.com/glutin)](https://crates.io/crates/glutin)
+[![](https://meritbadge.herokuapp.com/glutin)](https://crates.io/crates/glutin)
 
 [![Docs.rs](https://docs.rs/glutin/badge.svg)](https://docs.rs/glutin)
 
@@ -63,7 +63,7 @@ fn main() {
         events_loop.poll_events(|event| {
             match event {
                 glutin::Event::WindowEvent{ event, .. } => match event {
-                    glutin::WindowEvent::Closed => running = false,
+                    glutin::WindowEvent::CloseRequested => running = false,
                     glutin::WindowEvent::Resized(w, h) => gl_window.resize(w, h),
                     _ => ()
                 },
