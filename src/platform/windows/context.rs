@@ -46,7 +46,8 @@ impl Context {
             }
         });
         let context_result = unsafe {
-            let w = window.platform_window() as HWND;
+            use winit::os::windows::WindowExt;
+            let w = window.get_hwnd() as HWND;
             match gl_attr.version {
                 GlRequest::Specific(Api::OpenGlEs, (_major, _minor)) => {
                     if let Some(egl) = egl {
