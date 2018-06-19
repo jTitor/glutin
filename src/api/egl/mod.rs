@@ -15,6 +15,7 @@ use Api;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_void, c_int};
 use std::{mem, ptr};
+use std::cell::Cell;
 
 pub mod ffi;
 
@@ -38,9 +39,10 @@ pub struct Context {
     egl: ffi::egl::Egl,
     display: ffi::egl::types::EGLDisplay,
     context: ffi::egl::types::EGLContext,
-    surface: ffi::egl::types::EGLSurface,
+    surface: Cell<ffi::egl::types::EGLSurface>,
     api: Api,
     pixel_format: PixelFormat,
+    config_id: ffi::egl::types::EGLConfig,
 }
 
 #[cfg(target_os = "android")]
@@ -251,7 +253,7 @@ impl Context {
         };
 
         let (config_id, pixel_format) = unsafe {
-            try!(choose_fbconfig(&egl, display, &egl_version, api, version, pf_reqs))
+            choose_fbconfig(&egl, display, &egl_version, api, version, pf_reqs)?
         };
 
         Ok(ContextPrototype {
@@ -268,7 +270,7 @@ impl Context {
     }
 
     pub unsafe fn make_current(&self) -> Result<(), ContextError> {
-        let ret = self.egl.MakeCurrent(self.display, self.surface, self.surface, self.context);
+        let ret = self.egl.MakeCurrent(self.display, self.surface.get(), self.surface.get(), self.context);
 
         if ret == 0 {
             match self.egl.GetError() as u32 {
@@ -296,8 +298,12 @@ impl Context {
 
     #[inline]
     pub fn swap_buffers(&self) -> Result<(), ContextError> {
+        if self.surface.get() == ffi::egl::NO_SURFACE {
+            return Err(ContextError::ContextLost);
+        }
+
         let ret = unsafe {
-            self.egl.SwapBuffers(self.display, self.surface)
+            self.egl.SwapBuffers(self.display, self.surface.get())
         };
 
         if ret == 0 {
@@ -325,6 +331,43 @@ impl Context {
     pub unsafe fn raw_handle(&self) -> ffi::egl::types::EGLContext {
         self.context
     }
+
+    // Handle Android Life Cycle.
+    // Android has started the activity or sent it to foreground.
+    // Create a new surface and attach it to the recreated ANativeWindow.
+    // Restore the EGLContext.
+    #[cfg(target_os = "android")]
+    pub unsafe fn on_surface_created(&self, native_window: ffi::EGLNativeWindowType) {
+        if (self.surface.get() != ffi::egl::NO_SURFACE) {
+            return;
+        }
+        self.surface.set(self.egl.CreateWindowSurface(self.display, self.config_id, native_window, ptr::null()));
+        if self.surface.get().is_null() {
+            panic!("on_surface_created: eglCreateWindowSurface failed")
+        }
+        let ret = self.egl.MakeCurrent(self.display, self.surface.get(), self.surface.get(), self.context);
+        if ret == 0 {
+            panic!("on_surface_created: eglMakeCurrent failed");
+        }
+    }
+
+    // Handle Android Life Cycle.
+    // Android has stopped the activity or sent it to background.
+    // Release the surface attached to the destroyed ANativeWindow.
+    // The EGLContext is not destroyed so it can be restored later.
+    #[cfg(target_os = "android")]
+    pub unsafe fn on_surface_destroyed(&self) {
+        if (self.surface.get() == ffi::egl::NO_SURFACE) {
+            return;
+        }
+        let ret = self.egl.MakeCurrent(self.display, ffi::egl::NO_SURFACE, ffi::egl::NO_SURFACE, ffi::egl::NO_CONTEXT);
+        if ret == 0 {
+            panic!("on_surface_destroyed: eglMakeCurrent failed");
+        }
+
+        self.egl.DestroySurface(self.display, self.surface.get());
+        self.surface.set(ffi::egl::NO_SURFACE);
+    }
 }
 
 unsafe impl Send for Context {}
@@ -336,7 +379,7 @@ impl Drop for Context {
             // we don't call MakeCurrent(0, 0) because we are not sure that the context
             // is still the current one
             self.egl.DestroyContext(self.display, self.context);
-            self.egl.DestroySurface(self.display, self.surface);
+            self.egl.DestroySurface(self.display, self.surface.get());
             self.egl.Terminate(self.display);
         }
     }
@@ -403,9 +446,9 @@ impl<'a> ContextPrototype<'a> {
     {
         let context = unsafe {
             if let Some(version) = self.version {
-                try!(create_context(&self.egl, self.display, &self.egl_version,
+                create_context(&self.egl, self.display, &self.egl_version,
                                     &self.extensions, self.api, version, self.config_id,
-                                    self.opengl.debug, self.opengl.robustness))
+                                    self.opengl.debug, self.opengl.robustness)?
 
             } else if self.api == Api::OpenGlEs {
                 if let Ok(ctxt) = create_context(&self.egl, self.display, &self.egl_version,
@@ -451,9 +494,10 @@ impl<'a> ContextPrototype<'a> {
             egl: self.egl,
             display: self.display,
             context: context,
-            surface: surface,
+            surface: Cell::new(surface),
             api: self.api,
             pixel_format: self.pixel_format,
+            config_id: self.config_id
         })
     }
 }
@@ -727,6 +771,7 @@ unsafe fn create_context(egl: &ffi::egl::Egl, display: ffi::egl::types::EGLDispl
 
     if context.is_null() {
         match egl.GetError() as u32 {
+            ffi::egl::BAD_MATCH |
             ffi::egl::BAD_ATTRIBUTE => return Err(CreationError::OpenGlVersionNotSupported),
             e => panic!("eglCreateContext failed: 0x{:x}", e),
         }

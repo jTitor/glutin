@@ -20,14 +20,17 @@ impl Context {
         gl_attr: &GlAttributes<&Context>,
     ) -> Result<(winit::Window, Self), CreationError>
     {
-        let window = try!(window_builder.build(events_loop));
-        let (w, h) = window.get_inner_size_points().unwrap();
+        let window = window_builder.build(events_loop)?;
+        let (w_px, h_px) = window.get_inner_size().unwrap();
+        let hidpi_factor = window.hidpi_factor();
+        let w = (w_px as f32 / hidpi_factor) as u32;
+        let h = (h_px as f32 / hidpi_factor) as u32;
         let surface = window.get_wayland_surface().unwrap();
         let egl_surface = unsafe { wegl::WlEglSurface::new_from_raw(surface as *mut _, w as i32, h as i32) };
         let context = {
             let libegl = unsafe { dlopen::dlopen(b"libEGL.so\0".as_ptr() as *const _, dlopen::RTLD_NOW) };
             if libegl.is_null() {
-                return Err(CreationError::NotSupported);
+                return Err(CreationError::NotSupported("could not find libEGL"));
             }
             let egl = ::api::egl::ffi::egl::Egl::load_with(|sym| {
                 let sym = CString::new(sym).unwrap();
