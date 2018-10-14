@@ -92,10 +92,6 @@ use std::io;
 
 mod api;
 mod platform;
-//jtitor: Temporary add so gfx-rs doesn't melt
-//under macos
-#[cfg(target_os="macos")]
-pub use self::platform::HeadlessContext;
 
 pub mod os;
 
